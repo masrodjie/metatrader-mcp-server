@@ -317,3 +317,48 @@ def test_client_place_market_order_forwards_sl_tp(monkeypatch):
     inner.reset_mock()
     order.place_market_order(type="BUY", symbol="EURUSD", volume=0.01)
     inner.assert_called_once_with("conn", type="BUY", symbol="EURUSD", volume=0.01, stop_loss=0.0, take_profit=0.0)
+
+
+def _stub_send_order_env(monkeypatch, ask=1.1182, bid=1.1181):
+    """Patch send_order's MT5 dependencies; returns the captured order_send requests."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import importlib
+
+    # The package re-exports the function under the same name, so import the module explicitly.
+    so = importlib.import_module("metatrader_client.order.send_order")
+
+    sent = []
+    mt5 = MagicMock()
+    mt5.symbol_info.return_value = SimpleNamespace(filling_mode=1, digits=5)
+    mt5.symbol_info_tick.return_value = SimpleNamespace(ask=ask, bid=bid)
+    mt5.order_send.side_effect = lambda req: sent.append(req) or SimpleNamespace(
+        retcode=10009, order=1, price=req["price"], volume=req["volume"], comment="", request=SimpleNamespace(symbol=req["symbol"]),
+    )
+    mt5.last_error.return_value = (1, "Success")
+    mt5.TRADE_RETCODE_DONE = 10009
+    monkeypatch.setattr(so, "mt5", mt5)
+    monkeypatch.setattr(so, "MT5Market", lambda conn: SimpleNamespace(get_symbols=lambda s: [s]))
+    return so, sent
+
+
+def test_market_buy_sl_tp_validated_against_market_price(monkeypatch):
+    """A market BUY with SL below and TP above the market must not be rejected (price used to be 0)."""
+    so, sent = _stub_send_order_env(monkeypatch)
+    res = so.send_order(None, action="DEAL", order_type="BUY", symbol="EURUSD", volume=0.01, stop_loss=1.1082, take_profit=1.1282)
+    assert res.get("success") is not False, res
+    assert sent and sent[0]["price"] == 1.1182 and sent[0]["sl"] == 1.1082 and sent[0]["tp"] == 1.1282
+
+
+def test_market_sell_sl_tp_validated_against_market_price(monkeypatch):
+    so, sent = _stub_send_order_env(monkeypatch)
+    res = so.send_order(None, action="DEAL", order_type="SELL", symbol="EURUSD", volume=0.01, stop_loss=1.1282, take_profit=1.1082)
+    assert res.get("success") is not False, res
+    assert sent[0]["price"] == 1.1181
+
+
+def test_market_buy_sl_above_market_still_rejected(monkeypatch):
+    so, sent = _stub_send_order_env(monkeypatch)
+    res = so.send_order(None, action="DEAL", order_type="BUY", symbol="EURUSD", volume=0.01, stop_loss=1.2, take_profit=0)
+    assert res["success"] is False and not sent

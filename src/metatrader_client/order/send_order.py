@@ -121,6 +121,14 @@ def send_order(
 		else:
 			volume = float(volume)
 
+	# Market orders carry no price: resolve it from the tick now, so the SL/TP checks
+	# below compare against the real market price instead of 0.
+	if action == TradeRequestActions.DEAL and (price is None or float(price) == 0):
+		tick = mt5.symbol_info_tick(symbol)
+		if tick is None:
+			return { "success": False, "message": f"Failed to get tick for {symbol}", "data": None }
+		price = round(tick.ask if order_type == OrderType.BUY else tick.bid, symbol_info.digits)
+
 	# Validate price
 	price = float(price)
 	if not isinstance(price, float):
