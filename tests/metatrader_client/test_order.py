@@ -298,3 +298,22 @@ def test_full_order_functionality(mt5_client):
         f.write("\n---\n")
         f.write(f"**Status:** {status}\n")
     print(f"\n📄 Test report written to: {filepath}\n")
+
+
+def test_client_place_market_order_forwards_sl_tp(monkeypatch):
+    """The Order wrapper must accept and forward stop_loss/take_profit (the REST route sends them)."""
+    from unittest.mock import MagicMock
+
+    import metatrader_client.client_order as client_order
+
+    inner = MagicMock(return_value={"error": False})
+    monkeypatch.setattr(client_order, "place_market_order", inner)
+    order = client_order.MT5Order.__new__(client_order.MT5Order)
+    order._connection = "conn"
+
+    order.place_market_order(type="BUY", symbol="EURUSD", volume=0.01, stop_loss=1.09, take_profit=1.11)
+    inner.assert_called_once_with("conn", type="BUY", symbol="EURUSD", volume=0.01, stop_loss=1.09, take_profit=1.11)
+
+    inner.reset_mock()
+    order.place_market_order(type="BUY", symbol="EURUSD", volume=0.01)
+    inner.assert_called_once_with("conn", type="BUY", symbol="EURUSD", volume=0.01, stop_loss=0.0, take_profit=0.0)
